@@ -1,23 +1,23 @@
 # Meta Analysis for Undergraduate final Project
 ## Overveiw
-For my final project I completed a systematic reveiw and meta analysis of studies looking at long term potentiation and synaptic placticity using electrophysiology in the hippocampus of APP transgenic mouse models of Alzheimers Disease. Alzheimer’s disease (AD) in a progressive neurodegenerative disorder for which there is currently no effective disease altering treatment available. Most research in this area is aimed at reducing levels of amyloid beta build-up in the brain however despite extensive research, only a single treatment has been licensed. This has lead researchers to look at other targets, such as synaptic dysfunction which occurs earlier in disease progression. AD pre-clinical research utilises transgenic animal models, but the extent to which these models show synaptic dysfunction has shown varied results. This study used systematic review and meta-analysis techniques to analyse the impact of modelling AD with mutations in amyloid precursor protein on synaptic plasticity outcomes and identify sources of heterogeneity across publications. Results were pooled from 24 papers screened from 2109 studies. Publications measuring synaptic plasticity in hippocampal slices In vitro were identified by searching the AD-SOLES database for studies published from 2018-2023. AD-SOLES is a website (https://camarades. shinyapps.io/ad-soles/) containing a living database that systematically collects and synthesises all experimental evidence in animal models of Alzheimer’s disease using an integrated series of automated tools including machine-learning approaches to continually include new evidence published. It uses regular expressions (regex), which are a sequence of characters used to define a search pattern, applied to the title and abstract and the full text to tag papers with outcome measures. Meta analysis showed synaptic plasticity outcomes were found to be reduced in animal models of AD but it was not possible to identify sources of heterogeneity in the analysis. The study established the extent of the modelling effect of APP models of AD which giving a better understanding of baseline synaptic function, which would be a highly useful tool for the drug development pipeline. 
-
+For my final project I completed a systematic reveiw and meta analysis of studies looking at long term potentiation and synaptic placticity using electrophysiology in the hippocampus of APP transgenic mouse 
+ odels of Alzheimers Disease. Alzheimer’s disease (AD) in a progressive neurodegenerative disorder for which there is currently no effective disease altering treatment available. Most research in this area is aimed at reducing levels of amyloid beta build-up in the brain however despite extensive research, only a single treatment has been licensed. This has lead researchers to look at other targets, such as synaptic dysfunction which occurs earlier in disease progression. AD pre-clinical research utilises transgenic animal models, but the extent to which these models show synaptic dysfunction has shown varied results. This study used systematic review and meta-analysis techniques to analyse the impact of modelling AD with mutations in amyloid precursor protein on synaptic plasticity outcomes and identify sources of heterogeneity across publications. Results were pooled from 24 papers screened from 2109 studies. Publications measuring synaptic plasticity in hippocampal slices In vitro were identified by searching the AD-SOLES database for studies published from 2018-2023. AD-SOLES is a website (https://camarades.shinyapps.io/ad-soles/) containing a living database that systematically collects and synthesises all experimental evidence in animal models of Alzheimer’s disease using an integrated series of automated tools including machine-learning approaches to continually include new evidence published. It uses regular expressions (regex), which are a sequence of characters used to define a search pattern, applied to the title and abstract and the full text to tag papers with outcome measures. Meta analysis showed synaptic plasticity outcomes were found to be reduced in animal models of AD but it was not possible to identify sources of heterogeneity in the analysis. The study established the extent of the modelling effect of APP models of AD which giving a better understanding of baseline synaptic function, which would be a highly useful tool for the drug development pipeline. 
 
 ## Contents
 - data
-  - pilot study data - contains the data required to run the pilot study that was included as part of this research
-  - data wrangling and figures data - 
-  - mata analysis data
+  - pilot study data : contains the 4 data sets required to run the pilot study that was carried out as an investigative study. This is the data required to run the script found in script > pilot study called "Pilot Study.rmd"
+  - data wrangling and figures data : contains the 5 data sets required to run the script found in script > data wrangling and figures called "figures_markdown.rmd"
+  - mata analysis data : contains the data set required to run the script found in script > meta analysis called "diss meta analysis.rmd"
 - script
-   - pilot study
+   - pilot study 
    - data wrangling and figures
    - meta analysis
-- mark downs
-   - pilot study
-   - data wrangling and figures 
-   - meta analysis
-- Report: Contains the final document produced for this study
+- mark downs : 
+   - data wrangling and figures : contains a compiled markdown pdf with annotated code for the data wrangling and figures code
+   - meta analysis: contains a compiled markdown pdf with annotated code for the meta analysis code
+- Report: Contains the final document produced for the dissertation as well as the pilot study final report
 
+## Requirements
 
 library(tidyverse)
 library(dplyr)
