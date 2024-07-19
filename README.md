@@ -18,7 +18,6 @@ For my final project I completed a systematic reveiw and meta analysis of studie
 - Report: Contains the final document produced for the dissertation as well as the pilot study final report
 
 ## Requirements
-## Requiremnts
 To run the code in this repository, you will need the following software and packages:
 - R (version 4.0 or higher)
 - RStudio (recommended)
