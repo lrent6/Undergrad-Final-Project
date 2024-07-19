@@ -1,0 +1,677 @@
+---
+title: "Figures"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      fig.show='hide', 
+                      warning=FALSE, 
+                      message=FALSE,
+                      tidy.opts = list(width.cutoff = 60),
+                      tidy = TRUE)
+```
+
+
+
+```{r libraries, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(imputeTS)
+library(gt)
+library(scales)
+library(stringr)
+library(readxl)
+library(writexl)
+library(gtExtras)
+```
+
+# Data
+##Load Data
+```{r}
+study_data <- read_csv("study_data2.csv") 
+diseasemodel_data <- read_csv("diseasemodel_data2.csv") 
+outcome_data <- read_csv("outcome_data2.csv")
+```
+
+## My Data
+```{r}
+study_data <- study_data %>% 
+  filter(Year>= 2018 & Year<= 2023, SystematicSearchName== "2020-2023 Update",
+         InvestigatorName == "Laurel Renton", 
+         StudyId != "6d537dfe-3d19-4dbf-b9af-bf9fad52bb4b")# this study was falsely included 
+
+outcome_data <- outcome_data %>% 
+  filter(Year>= 2018 & Year<= 2023, SystematicSearchName== "2020-2023 Update", 
+         InvestigatorName == "Laurel Renton", 
+         StudyId != "6d537dfe-3d19-4dbf-b9af-bf9fad52bb4b")
+
+diseasemodel_data <- diseasemodel_data %>% 
+  filter(Year>= 2018 & Year<= 2023, SystematicSearchName== "2020-2023 Update", 
+         InvestigatorName == "Laurel Renton", 
+         StudyId != "6d537dfe-3d19-4dbf-b9af-bf9fad52bb4b")
+```
+
+## Reporting Data 
+```{r}
+full_data_figures <- read.csv("full_data.csv") %>% 
+    filter(AnnotatorIdStr == "00374321-95a7-4a2a-a12c-af4c0f9e599b",
+           StudyId != "6d537dfe-3d19-4dbf-b9af-bf9fad52bb4b") %>% 
+  select(StudyId) %>% 
+  unique() %>% 
+  mutate(other = 1)
+```
+
+
+## Number of Studies Included
+```{r}
+no_of_studies <- study_data %>% 
+  filter(QuestionId == "335bd414-ce8b-4127-a4ff-b02ec66a3b81", Answer == "Yes")
+```
+24 studies included after the screening process. 
+
+# Transgenic APP Models of AD 
+## Data Wrangling
+```{r}
+diseasemodel_comments <- read_csv("comments.csv") %>% 
+  filter(InvestigatorName == "Laurel Renton") %>% 
+  select(StudyId, Answer, Comments) 
+# adds comments for the models that weren't listed in the SyRF project
+
+
+model_data <- diseasemodel_data %>% 
+  left_join(diseasemodel_comments) %>% 
+  filter(QuestionId =="8255f1cf-1db1-4756-b77c-003df2860ed9") %>% 
+  select(StudyId, Answer, Comments) %>% 
+  unique() %>%
+  mutate(Answer = if_else(!is.na(Comments), Comments, Answer),
+         Answer = str_replace_all(Answer,'AppNL-G-F', 'APP NL-G-F Knock-in'),
+         Answer = str_replace_all(Answer, 'NL-P-F', 'APP NL-P-F Knock-in'), 
+         Count = 1) %>% 
+  select(Answer, Count) %>%
+  group_by(Answer) %>% 
+  summarise(Count = sum(Count)) %>% 
+  filter(Answer != "PDGF-APP(WT) (line I5)")  
+```
+
+## Plotting Donut Plot
+```{r}
+# Donut plot
+hsize <- 4
+
+color_palette <- c("#D1E7F6","#75B6E5","#77CEEF","#1CADE4", "#2683C6", "#7AE0E5", "#42BA97", "#146266", "#A1C8C5", "#D3F5F6", "#BECAD4", "#597287", "#0E5772", "#134263", "#6E9281", "#59A79E")
+
+
+donut_plot <- model_data %>%
+  mutate(x = hsize) %>%
+  ggplot(aes(x = hsize, y = Count, fill = Answer)) +
+  geom_col(color = "black") +
+  geom_text(aes(label = Count), position = position_stack(vjust = 0.5), size = 10,  color="white") +
+  coord_polar(theta = "y") +
+  scale_fill_manual(values = color_palette) +
+  xlim(c(0.2, hsize + 0.5)) +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.grid = element_blank(),
+        axis.title = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(), 
+        legend.text=element_text(size=12)) +
+  guides(fill = guide_legend(title = "AD APP Model"))
+donut_plot
+```
+
+
+# Study Quality Protocols
+```{r}
+quality_data <- full_data_figures %>% 
+  select(StudyId, `Sample Size` = "Is.a.sample.size.calculation.reported.",
+         Blinding = "Does.the.paper.report.that.experimenters.were.blind.to.experimental.groups.during.outcome.assessment.",
+         `Welfare Comitee Approval` = "Does.the.paper.report.that.experiments.were.approved.by.an.animal.welfare.committee",
+         `Conflict of Interest` = "Is.there.a.conflicts.of.interest.statement.", 
+         `Exclusion Criteria` = "Are.the.reasons.for.the.exclusion.of.data.points.reported.") %>% 
+  unique() %>% 
+  select(-StudyId) %>% 
+  pivot_longer(cols = everything(), names_to = "study_quality_items", values_to = "Value") %>% 
+  group_by(study_quality_items, Value) %>%
+  summarize(Count = n()) %>%
+  pivot_wider(names_from = Value, values_from = Count) %>% 
+  mutate(overall = 23, 
+         percentage_of_studies = `TRUE`/overall*100, 
+         across(where(is.numeric), ~round(., 2))) 
+
+quality_data_plot <- quality_data %>% 
+  ggplot(aes(x=reorder(study_quality_items, -percentage_of_studies), y= percentage_of_studies))+
+  geom_bar(stat="identity", fill="#174E77")+
+  geom_text(aes(label=percentage_of_studies), position = position_dodge(width = .9), hjust= 1.25, color="white", size=3.5)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  ggtitle("Studies (%) Reporting Different Study Quality Items")+
+  labs(x = "Study Quality Items", y = "Included (%)")+
+  coord_flip()+
+  scale_y_continuous(labels = abs, limits = c(0, 100))
+
+quality_data_plot
+```
+
+# Electrophysiology reporting quality
+```{r, results="hide"}
+## Applies to all experiments
+ephys_data_1 <- full_data_figures %>% 
+  filter(Outcome.category == "Electrophysiology") %>%
+  select(StudyId, Outcome = "OutcomeLabel",
+         Age = "What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.",
+         `Brain Pathway` = "Brain.pathway.recorded",
+         `Type of Recording Chamber` = "What.type.of.recording.chamber.was.used") %>% 
+  unique() %>% 
+  select(-c(StudyId, Outcome, Age)) %>% 
+  mutate(`Brain Pathway` = "Reported",
+         `Type of Recording Chamber` = case_when(`Type of Recording Chamber` == "Not reported"~"NotReported", 
+                                TRUE~"Reported"))%>% 
+  pivot_longer(cols = c(`Brain Pathway`, `Type of Recording Chamber`), names_to = "variable") %>%
+  group_by(variable, value) %>%
+  summarise(count = n()) %>%
+  pivot_wider(names_from = value, values_from = count) %>% 
+  na_replace(0) %>% 
+  mutate(Overall = Reported+NotReported)
+
+
+## Applies to only experiments looking at LTP and LTD
+ephys_data_2 <- full_data_figures %>% 
+  filter(Outcome.category == "Electrophysiology", 
+         OutcomeLabel %in% c("LTP", "LTD")) %>%
+  select(StudyId,
+          Outcome = "OutcomeLabel",
+         `Stimulation Type (LTP)` = "What.type.of.stimulation.was.used.to.induce.LTP.", 
+         `Stimulation Type (LTD)` = "What.type.of.stimulation.was.used.to.induce.LTD.",
+         Age = "What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.", 
+         `Total Stimulations` = "Total.number.of.stimulations",
+         `% of Maximal Response of Baseline Recording` = "Ephys..percentage.....of.maximal.response.from.input.output.used.for.baseline.recordings") %>% 
+  unique() %>% 
+  select(-StudyId, -Age) %>% 
+  unite("Stimulation Type", c("Stimulation Type (LTP)", "Stimulation Type (LTD)")) %>% 
+  mutate(`LTP/LTD Stimulation Type**`  = case_when(
+    `Stimulation Type` == c("Other (please leave a comment)_", "_Other (please leave a comment)")~"NotReported",
+                                    TRUE~"Reported"),
+    `Total Stimulations**` = case_when(`Total Stimulations` == "NR"~"NotReported", TRUE~"Reported"), 
+    `% of Maximal Response of Baseline Recording**` = case_when(`% of Maximal Response of Baseline Recording` == "NR"~"NotReported", TRUE~"Reported")) %>% 
+  select(-c(Outcome, `Stimulation Type`)) %>% 
+  pivot_longer(cols = c(`LTP/LTD Stimulation Type**`, `Total Stimulations**`, `% of Maximal Response of Baseline Recording**`), names_to = "variable") %>%
+  group_by(variable, value) %>%
+  summarise(count = n()) %>%
+  pivot_wider(names_from = value, values_from = count)%>% 
+  mutate(Overall = Reported+NotReported)
+
+ephys_data <- ephys_data_1 %>% 
+  full_join(ephys_data_2) %>% 
+  mutate(percentage = Reported/Overall, 
+          across(where(is.numeric), ~round(., 2))) %>% 
+  select(-c(NotReported, Reported, Overall))
+
+
+ephys_table <- ephys_data %>% 
+  gt() %>%
+  fmt_percent(columns = percentage, decimals = 1) %>% 
+  tab_header(title = md("**Reporting Quality of Electrophysiology Measures**")) %>%
+  cols_label(percentage = "Experiments Reported*") %>%
+  tab_source_note(source_note = "* 58 experiments across 24 studies assessing synaptic plasticity/ transmission") %>%
+  tab_source_note(source_note = "** across 28 experiments assessing LTP/LTD") %>% 
+  tab_style(locations = cells_column_labels(columns = everything()),
+            style = list(cell_borders(sides = "bottom", weight = px(3)),
+                         cell_text(weight = "bold"))) %>% 
+  cols_width(percentage~"70%")
+
+ephys_table
+```
+
+
+# Animal Husbandary
+```{r}
+animal_data <- full_data_figures %>% 
+  select(StudyId, lightcycle= "Animal.husbandry..light.cycle..h..of.animal.facilities", 
+         animalspercage = "Animal.husbandry..number.of.animals.per.cage", 
+         environmental = "Animal.husbandry..is.any.environmental.enrichment.reported.") %>% 
+  unique() %>% 
+  select(-StudyId) %>% 
+  mutate(lightcycle = case_when(lightcycle == "NR"~"NotReported", TRUE~"Reported"), 
+         animalspercage = case_when(animalspercage == "NR"~"NotReported", 
+                                    TRUE~"Reported"), 
+         environmental = case_when(environmental == "FALSE"~"NotReported", 
+                                 TRUE~"Reported")) %>% 
+  pivot_longer(cols = c(lightcycle, 
+                        animalspercage,
+                        environmental),
+                        names_to = "variable") %>% 
+  group_by(variable, value) %>%
+  summarise(count = n()) %>%
+  pivot_wider(names_from = value, values_from = count)%>% 
+  mutate(Overall = Reported+NotReported, 
+         percentage = Reported/Overall*100, 
+         across(where(is.numeric), ~round(., 2))) %>% 
+  select(-c(NotReported, Reported, Overall))
+  
+```
+
+
+# Slice Protocol Measures
+```{r}
+slice_data <- full_data_figures %>% 
+  select(StudyId,
+         `Ca concentration in slicing solution` = "Ephys..calcium.concentration..mM..of.slicing.solution", 
+         `Ca concentration in recording solution` = "Ephys..calcium.concentration..mM..of.recording.solution", 
+         `Mg concentration in slicing solution` = "Ephys..magnesium.concentration..mM..of.slicing.solution", 
+         `Mg concentration in recording solution` = "Ephys..magnesium.concentration..mM..of.ACSF.used.for.recording", 
+         `Plane slice taken from` = "Which.plane.was.the.slice.taken.from.", 
+         `Temperature slice left to recover at` = "Ephys..temperature...C..slices.left.to.recover.at", 
+         `Slice recovery time` = "How.long..minutes..were.brain.slices.left.to.recover.after.slicing.",
+         `Kynurenic acid used`= "Ephys..was.kynurenic.acid.used.during.the.brain.dissection.", 
+         `Anaesthetised prior to sacrifice` = "Ephys..were.animals.anaesthetised.prior.to.decapitation.", 
+         `Sacrifice time of day` = "Ephys..what.time.of.day.were.animals.sacrificed.") %>% 
+  unique() %>% 
+  select(-StudyId) %>% 
+  mutate(`Ca concentration in slicing solution` = case_when(`Ca concentration in slicing solution` == "NR"~"NotReported", 
+                                                              TRUE~"Reported"),
+         `Ca concentration in recording solution` = case_when(`Ca concentration in recording solution` == "NR"~"NotReported", 
+                                                              TRUE~"Reported"), 
+         `Mg concentration in slicing solution` = case_when(`Mg concentration in slicing solution` == "NR"~"NotReported", 
+                                                            TRUE~"Reported"), 
+         `Mg concentration in recording solution` = case_when(`Mg concentration in recording solution` == "NR"~"NotReported", 
+                                                            TRUE~"Reported"), 
+         `Plane slice taken from` = case_when(`Plane slice taken from` == "Not reported"~"NotReported", TRUE~"Reported"),
+         `Temperature slice left to recover at`= case_when(`Temperature slice left to recover at` == "NR"~"NotReported", 
+                                                              TRUE~"Reported"), 
+         `Slice recovery time` = case_when(`Slice recovery time` == "NR"~"NotReported", TRUE~"Reported"), 
+         `Kynurenic acid used` = case_when(`Kynurenic acid used` == "No"~"NotReported", TRUE~"Reported"), 
+         `Anaesthetised prior to sacrifice` = case_when(`Anaesthetised prior to sacrifice` == "Not reported"~"NotReported", 
+                                TRUE~"Reported"),  
+         `Sacrifice time of day` = case_when(`Sacrifice time of day` == "Not reported"~"NotReported", 
+                                TRUE~"Reported"),)  %>% 
+  pivot_longer(cols = c(`Ca concentration in slicing solution`,
+                        `Ca concentration in recording solution`,
+                        `Mg concentration in slicing solution`,
+                        `Mg concentration in recording solution`,
+                        `Plane slice taken from`,
+                        `Temperature slice left to recover at`,
+                        `Slice recovery time`,
+                        `Kynurenic acid used`,
+                        `Anaesthetised prior to sacrifice`, 
+                        `Sacrifice time of day`),
+                        names_to = "variable") %>% 
+  group_by(variable, value) %>%
+  summarise(count = n()) %>%
+  pivot_wider(names_from = value, values_from = count)%>% 
+  mutate(Overall = Reported+NotReported, 
+         percentage = Reported/Overall*100, 
+         across(where(is.numeric), ~round(., 2))) %>% 
+  select(-c(NotReported, Reported, Overall)) 
+
+slice_plot <- slice_data %>% 
+  ggplot(aes(x= reorder(variable, percentage), y= percentage))+
+  geom_bar(stat="identity", fill="#2683C6")+
+  geom_text(aes(label=percentage), position = position_dodge(width = .9), hjust= 1.25, color="white", size=3.5)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  ggtitle("Studies(%) Reporing Different Slice Protocol Measures")+
+  labs(x = "Protocol Measure", y = "Included (%)")+
+  coord_flip()+
+  scale_y_continuous(labels = abs, limits = c(0, 100))
+
+slice_plot
+```
+
+
+# Age and Sex Data
+```{r}
+age_sex_data <- full_data_figures %>%
+  filter(Outcome.category == "Electrophysiology") %>% 
+  select(StudyId, Outcome = "OutcomeLabel", Age = "What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.", Sex = "Sex.of.animals.in.cohort") %>% 
+  unique()
+  
+
+sex_data <- age_sex_data %>% 
+  count(Sex) %>% 
+  mutate(overall = sum(n), 
+         percentage = n/ overall*100,  
+         across(where(is.numeric), ~round(., 2))) %>% 
+  ggplot(aes(x = Sex, y = percentage))+
+  ylim(0, 100)+
+  geom_bar(stat = "identity", fill = "#2683C6")+
+  geom_text(aes(label=percentage), vjust = 1.5, color="white")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  ggtitle("Sex of Transgenic Animals Used")+
+  labs(x = "Sex", y = "(%) Experiments Using Sex")
+
+sex_data
+
+age_count <- age_sex_data %>% 
+  count(Age)
+
+age_data <- age_sex_data %>% 
+  mutate(Age = as.numeric(Age)) %>% 
+  ggplot(aes(x=Age)) + 
+  geom_histogram(aes(y=..density..), fill="#174E77")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  ggtitle("Age of Transgenic Animals Used")+
+  labs(x = "Age (Weeks)", y = "Density of Experiments Using Age")
+
+age_data
+```
+
+
+# Publication Location
+```{r}
+countries_included <- full_data_figures %>% 
+  select(region = "What.is.the.country.of.origin.of.the.corresponding.author", StudyId) %>% 
+  unique() %>% 
+  mutate(`Number of Studies` = 1) %>% 
+  select(-StudyId) %>% 
+  group_by(region) %>% 
+  summarise(`Number of Studies` = sum(`Number of Studies`)) %>% 
+  mutate(region = if_else(region == "United Kingdom", "UK",
+                          if_else(region == "United States", "USA",
+                                  if_else(region == "Korea, South", "South Korea", region))))
+
+
+mapdata <- map_data("world") %>% 
+  left_join(countries_included, by = "region") 
+
+map1 <- mapdata %>% 
+  ggplot(aes(x = long, y = lat, group = group)) + 
+  geom_polygon(aes(fill = `Number of Studies`))
+map1
+```
+
+# Year Published 
+```{r}
+year_data <- full_data_figures %>% 
+  select(StudyId, Year) %>% 
+  unique() %>% 
+  mutate(`Number of Studies` = 1) %>% 
+  select(-StudyId) %>% 
+  group_by(Year) %>% 
+  summarise(`Number of Studies` = sum(`Number of Studies`)) %>% 
+  add_row(Year = 2023, `Number of Studies` = 0)
+
+year_plot <- year_data %>% 
+  ggplot(aes(x=Year, y= `Number of Studies`, group=1)) +
+  geom_line()+
+  geom_point()+
+  geom_smooth(method = "lm", se= FALSE, col = "#174E77")
+
+year_plot
+```
+
+
+## Publication Bias (I/O)
+```{r}
+# Define fill colors for contour
+col.contour = c("gray75", "gray85", "gray95")
+
+# Generate funnel plot (we do not include study labels here)
+funnel.meta(ma_results_IO, xlim = c(-5, 5), #took the SMD from the forest plot
+            contour = c(0.9, 0.95, 0.99),
+            col.contour = col.contour)
+
+# Add a legend
+legend(x = -5, y = 0, 
+       legend = c("p < 0.1", "p < 0.05", "p < 0.01"),
+       fill = col.contour)
+
+# Add a title
+title("Funnel Plot of I/O")
+
+
+## Adds columns to the ma_results_ltp30 to use in the Putejovsky analysis
+ma_results_IO$n.e = IO_model_data_final$New_n_model
+ma_results_IO$n.c = IO_model_data_final$`New_n_model control`
+
+# Pustejovsky 
+metabias(ma_results_IO, method.bias = "Pustejovsky")
+```
+
+
+## Trim and Fill (IO)
+for outlier code https://raw.githubusercontent.com/MathiasHarrer/dmetar/master/R/find.outliers.R
+
+```{r}
+## Trim Fill
+tf_IO <- trimfill(ma_results_IO)
+summary(tf_IO)
+
+## trim and fill is very sensitive to heterogeneity so a sensitivity test is carried out
+
+## Test for outliers- sensitivity analysis
+# if we remove outliers it reduces the heterogeneity and allows us to rerun the trim and fill
+# find outliers 
+find.outliers(ma_results_IO) ## have to load a package (chap 5.2 in handbook)
+
+# filter out outliers and rerun meta and funnel plot
+IO_nooutliers <- ma_results_IO %>% 
+  filter(id != 10, 
+         id != 5, 
+         id != 3,
+         id != 1) # needs to be checked when find the outliers
+
+ma_results_IO_nooutliers <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experimen
+  sm = "SMD",
+  data = IO_nooutliers, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+
+summary(ma_results_IO_nooutliers) ## reduces heterogenity to 25% 
+
+tf_IO_nooutliers <- trimfill(ma_results_IO_nooutliers)
+summary(tf_IO_nooutliers)
+
+
+## plotting the two trim and fills
+# Define fill colors for contour
+contour <- c(0.9, 0.95, 0.99)
+col.contour <- c("gray75", "gray85", "gray95")
+ld <- c("p < 0.1", "p < 0.05", "p < 0.01")
+
+# Use 'par' to create two plots in one row (row, columns)
+par(mfrow=c(1,2))
+
+# Contour-enhanced funnel plot (full data)
+funnel.meta(tf_IO, 
+            xlim = c(-5, 5), contour = contour,
+            col.contour = col.contour)
+legend(x = -5, y = 0, 
+       legend = ld, fill = col.contour)
+title("I/O Funnel Plot (Trim & Fill Method)")
+
+# Contour-enhanced funnel plot (outliers removed)
+funnel.meta(tf_IO_nooutliers, 
+            xlim = c(-8, 8), contour = contour,
+            col.contour = col.contour)
+legend(x = -7.5, y = 0.01, 
+       legend = ld, fill = col.contour)
+title("Funnel Plot (Trim & Fill Method)
+      -Outliers Removed", )
+```
+
+
+## MWM Check and data
+```{r}
+##Studies that include MWM and Ephys
+
+MWM_data <- full_data %>% 
+  filter(Outcome.category == "MWM") %>% 
+  group_by(ExperimentID) %>% # within each StudyId and ExperimentId, filter to keep only cohorts with a model and model control row
+  filter(any(ModelType == "model control") &
+           any(ModelType == "model")) #%>% 
+  #write_xlsx("MWM_data.xlsx")
+
+```
+
+
+# MWM Probe data
+```{r}
+MWM_probe <- read_xlsx("MWM_data.xlsx") %>% 
+  filter(Type.of.MWM.outcome == "Probe phase")
+  
+MWM_probe_model <- MWM_probe %>% 
+  select(StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, NumberOfAnimals, TimeInMinute, Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.MWM.outcomes.were.assessed.) %>% 
+  mutate(TimeInMinute = "1") %>% 
+  mutate(GreaterIsWorse = TRUE)
+
+MWM_probe_model_data <- MWM_probe_model %>% 
+  mutate(SD = ifelse(Outcome.measure.error.type == "SD", OutcomeError, OutcomeError * sqrt(NumberOfAnimals)))%>% 
+  mutate(SEM = ifelse(Outcome.measure.error.type == "SEM", OutcomeError, SD / sqrt(NumberOfAnimals))) %>%
+  unique() %>% select(-OutcomeError) %>% # remove OutcomeError column 
+  mutate(Direction= ifelse(GreaterIsWorse ==TRUE, 1, -1)) %>%
+  mutate(NumberOfAnimals = as.numeric(NumberOfAnimals)) %>%
+  mutate(OutcomeResult = as.numeric(OutcomeResult)) %>%
+  mutate(SEM = as.numeric(SEM)) %>%
+  mutate(SD = as.numeric(SD)) 
+
+MWM_probe_model_wide <- MWM_probe_model_data %>%
+  pivot_wider(names_from = ModelType, values_from = c(NumberOfAnimals, SD, SEM, OutcomeResult, CohortId), values_fn=list) %>% 
+  unnest(cols=everything()) 
+
+
+MWM_probe_model_final <- MWM_probe_model_wide %>%
+  mutate(combined_n = `NumberOfAnimals_model control` + NumberOfAnimals_model) %>%
+  mutate(SPooled = sqrt(((`NumberOfAnimals_model control`- 1) * `SD_model control`^2 +
+                           (NumberOfAnimals_model - 1) * SD_model^2)/ (combined_n-2))) %>%
+  mutate(SMD_step1 = (`OutcomeResult_model control`-`OutcomeResult_model`)
+           /SPooled) %>%
+  mutate(SMD_step2 = (1 - (3/(4*combined_n-9)))) %>%
+  mutate(SMD_ES = SMD_step1 * SMD_step2 * Direction) %>% #equation 15
+  mutate(SMD_ES_SE = sqrt(
+    combined_n/(NumberOfAnimals_model  * `NumberOfAnimals_model control`) +
+           SMD_ES^2/(2*(combined_n - 3.94)))) %>% #equation 16
+  mutate(weight = 1/(SMD_ES_SE^2)) %>% #equation 20
+  mutate(weighted_ES = SMD_ES * weight) %>% #equation 21 
+  group_by(StudyId) %>%
+  mutate(id = cur_group_id()) %>%
+  select(id, everything())
+
+ma_results_MWM_probe <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experiment
+  sm = "SMD",
+  data = MWM_probe_model_final, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+summary(ma_results_MWM_probe)
+
+
+smd_MWM_probe <- ma_results_MWM_probe %>%
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab") ## gets the SMD into a data frame
+
+regression_MWM_probe <- MWM_probe_model_final %>% 
+  select(SMD_ES, id, StudyId) %>% 
+  left_join(smd_MWM_probe) # data set with SMD and SMD_ED, StudyId and id
+
+```
+
+
+# MWMW acquisition
+```{r}
+MWM_acquisition <- read_xlsx("MWM_data.xlsx") %>% 
+  filter(Type.of.MWM.outcome == "Acquisition phase", 
+         Was.this.a.visible.platform.test. != "TRUE") ## filter out visible
+  
+MWM_acquisition_model <- MWM_acquisition %>% 
+  select(StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, NumberOfAnimals, TimeInMinute, Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.MWM.outcomes.were.assessed.) %>% 
+  mutate(TimeInMinute = "1") %>% 
+  mutate(GreaterIsWorse = TRUE)
+
+MWM_acquisition_model_data <- MWM_acquisition_model %>% 
+  mutate(SD = ifelse(Outcome.measure.error.type == "SD", OutcomeError, OutcomeError * sqrt(NumberOfAnimals)))%>% 
+  mutate(SEM = ifelse(Outcome.measure.error.type == "SEM", OutcomeError, SD / sqrt(NumberOfAnimals))) %>%
+  unique() %>% select(-OutcomeError) %>% # remove OutcomeError column 
+  mutate(Direction= ifelse(GreaterIsWorse ==TRUE, 1, -1)) %>%
+  mutate(NumberOfAnimals = as.numeric(NumberOfAnimals)) %>%
+  mutate(OutcomeResult = as.numeric(OutcomeResult)) %>%
+  mutate(SEM = as.numeric(SEM)) %>%
+  mutate(SD = as.numeric(SD)) %>% 
+  mutate(OutcomeLabel = "MWM acquisition")
+
+MWM_acquisition_model_wide <- MWM_acquisition_model_data %>%
+  pivot_wider(names_from = ModelType, values_from = c(NumberOfAnimals, SD, SEM, OutcomeResult, CohortId), values_fn=list) %>% 
+  unnest(cols=everything())  ## error ask kaitlyn - cant pivot not sure why
+
+# should run if pivot fixed
+MWM_acquisition_model_final <- MWM_acquisition_model_wide %>%
+  mutate(combined_n = `NumberOfAnimals_model control` + NumberOfAnimals_model) %>%
+  mutate(SPooled = sqrt(((`NumberOfAnimals_model control`- 1) * `SD_model control`^2 +
+                           (NumberOfAnimals_model - 1) * SD_model^2)/ (combined_n-2))) %>%
+  mutate(SMD_step1 = (`OutcomeResult_model control`-`OutcomeResult_model`)
+           /SPooled) %>%
+  mutate(SMD_step2 = (1 - (3/(4*combined_n-9)))) %>%
+  mutate(SMD_ES = SMD_step1 * SMD_step2 * Direction) %>% #equation 15
+  mutate(SMD_ES_SE = sqrt(
+    combined_n/(NumberOfAnimals_model  * `NumberOfAnimals_model control`) +
+           SMD_ES^2/(2*(combined_n - 3.94)))) %>% #equation 16
+  mutate(weight = 1/(SMD_ES_SE^2)) %>% #equation 20
+  mutate(weighted_ES = SMD_ES * weight) %>% #equation 21 
+  group_by(StudyId) %>%
+  mutate(id = cur_group_id()) %>%
+  select(id, everything())
+
+ma_results_MWM_aquisition <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experiment
+  sm = "SMD",
+  data = MWM_acquisition_model_final, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+summary(ma_results_MWM_aquisition)
+
+
+smd_MWM_acquisition <- ma_results_MWM_aquisition %>%
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab") ## gets the SMD into a data frame
+
+regression_MWM_acquisition <- MWM_acquisition_model_final %>% 
+  select(SMD_ES, id, StudyId) %>% 
+  left_join(smd_MWM_acquisition) # data set with SMD and SMD_ED, StudyId and id
+```
+
+
+# Data for LTP at 30 mins
+```{r}
+# get the SMD into a data frame
+smd_ltp30 <- ma_results_ltp30 %>%
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab")
+
+#get the SMD_ES into a data frame
+regression_ltp30 <- LTP_model_data_30_final %>% 
+  select(SMD_ES, id, StudyId) %>% 
+  left_join(smd_ltp30)
+
+```
+
+
+# Data for LTP at 60 mins 
+```{r}
+smd_ltp60 <- ma_results_ltp60 %>% 
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab")
+
+regression_ltp60 <- LTP_model_data_60_final %>% 
+  select(SMD_ES, id, StudyId) %>% 
+  left_join(smd_ltp60)
+```
+

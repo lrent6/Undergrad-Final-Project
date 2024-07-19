@@ -1,0 +1,795 @@
+---
+title: "Meta-Analysis"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      fig.show='hide', 
+                      warning=FALSE, 
+                      message=FALSE,
+                      tidy.opts = list(width.cutoff = 60),
+                      tidy = TRUE, 
+                      eval = FALSE)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(kableExtra)
+library(rmarkdown)
+library(knitr)
+library(janitor)
+library(meta)
+library(metafor)
+library(readxl)
+library(writexl)
+```
+
+
+## Full data wrangling
+```{r}
+full_data <- read.csv("full_data.csv") %>% 
+    filter(AnnotatorIdStr == "00374321-95a7-4a2a-a12c-af4c0f9e599b", 
+           NumberOfAnimals!= 0, #filters out studies with no n number
+           StudyId != "6d537dfe-3d19-4dbf-b9af-bf9fad52bb4b")
+```
+
+#LTP data
+## data wrangling to get the right data
+```{r}
+LTPdata <- full_data %>% 
+  filter(Outcome.measure.category == "LTP")#%>% 
+  #write_xlsx("newLTP_data.xlsx") # use this data to add n numbers
+
+LTP_data <- read_xlsx("LTP_data_newn.xlsx") %>% 
+  ## removes studies not needed
+  group_by(ExperimentID) %>% 
+  filter(any(ModelType == "model control") &
+           any(ModelType == "model"))
+```
+
+
+```{r}
+# selecting the right columns
+LTP_model_data <- LTP_data %>% 
+  select(MatchId, StudyId, 
+         Author, OutcomeLabel,
+         CohortId, ExperimentID,
+         GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type,
+         OutcomeError,
+         Outcome.measure.error.type,
+         ModelType, New_n, 
+         TimeInMinute, 
+         Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.)
+```
+
+## LTP 30 minutes 
+```{r}
+## LTP at 30 min
+LTP_model_data_30 <- LTP_model_data %>% 
+  filter(TimeInMinute >29 & TimeInMinute< 31) %>% # first look at LTP at 30 min 
+  mutate(TimeInMinute = 30) %>%
+  mutate(SD = ifelse(Outcome.measure.error.type == "SD",
+                     OutcomeError, OutcomeError * sqrt(New_n)))%>% 
+  mutate(SEM = ifelse(Outcome.measure.error.type == "SEM", 
+                      OutcomeError, SD / sqrt(New_n))) %>%
+  unique() %>% select(-OutcomeError) %>% # remove OutcomeError column 
+  mutate(Direction= ifelse(GreaterIsWorse ==TRUE, 1, -1)) %>%
+  mutate(New_n = as.numeric(New_n)) %>%
+  mutate(OutcomeResult = as.numeric(OutcomeResult)) %>%
+  mutate(SEM = as.numeric(SEM)) %>%
+  mutate(SD = as.numeric(SD)) 
+```
+
+## Widen data set (30)
+```{r}
+LTP_model_data_30_wide <- LTP_model_data_30 %>%
+  pivot_wider(names_from = ModelType,
+              values_from = c(New_n, SD, SEM, OutcomeResult, CohortId),
+              values_fn=list) %>% 
+  unnest(cols=everything()) 
+```
+
+
+## Calculating effect sizes (30)
+```{r}
+LTP_model_data_30_final <- LTP_model_data_30_wide %>%
+  mutate(combined_n = `New_n_model control` + New_n_model) %>%
+  mutate(SPooled = sqrt(((`New_n_model control`- 1) * `SD_model control`^2 +
+                           (New_n_model - 1) * SD_model^2)/ (combined_n-2))) %>%
+  mutate(SMD_step1 = (`OutcomeResult_model control`-`OutcomeResult_model`)
+           /SPooled) %>%
+  mutate(SMD_step2 = (1 - (3/(4*combined_n-9)))) %>%
+  mutate(SMD_ES = SMD_step1 * SMD_step2 * Direction) %>% #equation 15
+  mutate(SMD_ES_SE = sqrt(
+    combined_n/(New_n_model  * `New_n_model control`) +
+           SMD_ES^2/(2*(combined_n - 3.94)))) %>% #equation 16
+  mutate(weight = 1/(SMD_ES_SE^2)) %>% #equation 20
+  mutate(weighted_ES = SMD_ES * weight) %>% #equation 21 
+  group_by(StudyId) %>%
+  mutate(id = cur_group_id()) %>%
+  select(id, everything())
+```
+
+
+## Random effects meta-analysis (30)
+```{r}
+ma_results_ltp30 <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experiment
+  sm = "SMD",
+  data = LTP_model_data_30_final, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+
+summary(ma_results_ltp30)
+```
+
+
+## Forest Plot (30)
+```{r}
+forest_plot_30 <- forest(
+  ma_results_ltp30, # specify the meta-analysis to plot
+  sortvar = TE, # sort the data according to effect size
+  comb.fixed = FALSE, # do not plot the fixed effect estimate
+  comb.random = TRUE, # plot the random effects estimate
+  xlab = "SMD", # specify the x axis label
+  smlab = "Standardised Mean Difference", # specify the effect size label
+  label.right = "Increased LTP", # specify the graph label on right side of plot
+  label.left = "Decreased LTP", # specify the graph label on left side of plot
+  fontsize = 18, # specify the size of text (in points)
+  plotwidth = "15cm", # specify the width of the plotting region
+  digits = 1, # specify minimal number of significant digits for treatment effects
+  digits.se = 1, # specify minimal number of significant digits for standard errors
+  col.square="lightblue",
+  leftcols = c("id"),
+  leftlabs = c("id"),
+  col.diamond = "darkblue",
+  spacing=1.2
+)
+```
+
+
+## Publication Bias (30)
+```{r}
+# Define fill colors for contour
+col.contour = c("gray75", "gray85", "gray95")
+
+# Generate funnel plot (we do not include study labels here)
+funnel.meta(ma_results_ltp30, xlim = c(-8, 2), #took the SMD from the forest plot
+            contour = c(0.9, 0.95, 0.99),
+            col.contour = col.contour)
+
+# Add a legend
+legend(x = -7.5, y = 0.01, 
+       legend = c("p < 0.1", "p < 0.05", "p < 0.01"),
+       fill = col.contour)
+
+# Add a title
+title("Funnel Plot of LTP after 30 min")
+
+
+## Adds columns to the ma_results_ltp30 to use in the Putejovsky analysis
+ma_results_ltp30$n.e = LTP_model_data_30_final$New_n_model
+ma_results_ltp30$n.c = LTP_model_data_30_final$`New_n_model control`
+
+# Pustejovsky 
+metabias(ma_results_ltp30, method.bias = "Pustejovsky")
+
+
+```
+
+## Trim and Fill (30)
+Needed to load to find outliers https://raw.githubusercontent.com/MathiasHarrer/dmetar/master/R/find.outliers.R
+```{r}
+
+## Trim Fill
+tf_ltp30 <- trimfill(ma_results_ltp30)
+summary(tf_ltp30)
+
+
+# Define fill colors for contour
+contour <- c(0.9, 0.95, 0.99)
+col.contour <- c("gray75", "gray85", "gray95")
+ld <- c("p < 0.1", "p < 0.05", "p < 0.01")
+
+# Use 'par' to create two plots in one row (row, columns)
+par(mfrow=c(1,2))
+
+# Contour-enhanced funnel plot (full data)
+funnel.meta(tf_ltp30, 
+            xlim = c(-8, 8), contour = contour,
+            col.contour = col.contour)
+legend(x = -7.5, y = 0, 
+       legend = ld, fill = col.contour)
+title("Funnel Plot (Trim & Fill Method)")
+
+
+# find outliers 
+find.outliers(ma_results_ltp30) ## have to load a package (chap 5.2 in handbook)
+
+# filter out outliers and rerun meta and funnel plot
+ltp30_nooutliers <- LTP_model_data_30_final %>% 
+  filter(id != 10, 
+         id != 5, 
+         id != 3)
+
+ma_results_ltp30_nooutliers <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experimen
+  sm = "SMD",
+  data = ltp30_nooutliers, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+
+summary(ma_results_ltp30_nooutliers) ## reduces heterogenity to 25% 
+
+tf_ltp30_nooutliers <- trimfill(ma_results_ltp30_nooutliers)
+summary(tf_ltp30_nooutliers)
+
+
+# Define fill colors for contour
+contour <- c(0.9, 0.95, 0.99)
+col.contour <- c("gray75", "gray85", "gray95")
+ld <- c("p < 0.1", "p < 0.05", "p < 0.01")
+
+
+# Contour-enhanced funnel plot (outliers removed)
+funnel.meta(tf_ltp30_nooutliers, 
+            xlim = c(-8, 8), contour = contour,
+            col.contour = col.contour)
+legend(x = -7.5, y = 0.01, 
+       legend = ld, fill = col.contour)
+title("Funnel Plot (Trim & Fill Method)
+      -Outliers Removed")
+
+```
+
+
+
+## LTP 60 minutes
+```{r}
+## LTP at 30 min
+LTP_model_data_60 <- LTP_model_data %>% 
+  filter(TimeInMinute >59 & TimeInMinute< 61) %>% # first look at LTP at 30 min 
+  mutate(TimeInMinute = 60) %>%
+  mutate(SD = ifelse(Outcome.measure.error.type == "SD",
+                     OutcomeError, OutcomeError * sqrt(New_n)))%>% 
+  mutate(SEM = ifelse(Outcome.measure.error.type == "SEM",
+                      OutcomeError, SD / sqrt(New_n))) %>%
+  unique() %>% select(-OutcomeError) %>% # remove OutcomeError column 
+  mutate(Direction= ifelse(GreaterIsWorse ==TRUE, 1, -1)) %>%
+  mutate(New_n = as.numeric(New_n)) %>%
+  mutate(OutcomeResult = as.numeric(OutcomeResult)) %>%
+  mutate(SEM = as.numeric(SEM)) %>%
+  mutate(SD = as.numeric(SD)) 
+```
+
+
+## Widen data set(60)
+```{r}
+LTP_model_data_60_wide <- LTP_model_data_60 %>%
+  pivot_wider(names_from = ModelType, values_from = c(New_n, SD, SEM,
+                                                      OutcomeResult, CohortId), values_fn=list) %>% 
+  unnest(cols=everything()) 
+```
+
+
+## Calculating effect sizes (60)
+```{r}
+LTP_model_data_60_final <- LTP_model_data_60_wide %>%
+  mutate(combined_n = `New_n_model control` + New_n_model) %>%
+  mutate(SPooled = sqrt(((`New_n_model control`- 1) * `SD_model control`^2 +
+                           (New_n_model - 1) * SD_model^2)/ (combined_n-2))) %>%
+  mutate(SMD_step1 = (`OutcomeResult_model control`-`OutcomeResult_model`)
+           /SPooled) %>%
+  mutate(SMD_step2 = (1 - (3/(4*combined_n-9)))) %>%
+  mutate(SMD_ES = SMD_step1 * SMD_step2 * Direction) %>% #equation 15
+  mutate(SMD_ES_SE = sqrt(
+    combined_n/(New_n_model  * `New_n_model control`) +
+           SMD_ES^2/(2*(combined_n - 3.94)))) %>% #equation 16
+  mutate(weight = 1/(SMD_ES_SE^2)) %>% #equation 20
+  mutate(weighted_ES = SMD_ES * weight) %>% #equation 21 
+  group_by(StudyId) %>%
+  mutate(id = cur_group_id()) %>%
+  select(id, everything())
+```
+
+## Random effects meta-analysis (60)
+```{r}
+ma_results_ltp60 <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experimen
+  sm = "SMD",
+  data = LTP_model_data_60_final, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+
+summary(ma_results_ltp60)
+```
+
+## Forest Plot (60)
+```{r}
+forest_plot_60 <- forest(
+  ma_results_ltp60, # specify the meta-analysis to plot
+  sortvar = TE, # sort the data according to effect size
+  comb.fixed = FALSE, # do not plot the fixed effect estimate
+  comb.random = TRUE, # plot the random effects estimate
+  xlab = "SMD", # specify the x axis label
+  smlab = "Standardised Mean Difference", # specify the effect size label
+  label.right = "Increased LTP", # specify the graph label on right side of plot
+  label.left = "Decreased LTP", # specify the graph label on left side of plot
+  fontsize = 18, # specify the size of text (in points)
+  plotwidth = "15cm", # specify the width of the plotting region
+  digits = 1, # specify minimal number of significant digits for treatment effects
+  digits.se = 1, # specify minimal number of significant digits for standard errors
+  col.square="lightblue",
+  leftcols = c("id"),
+  leftlabs = c("id"),
+  col.diamond = "darkblue",
+  spacing=1.2
+)
+```
+
+
+#I/O data
+```{r}
+IO_data <- full_data %>% 
+  filter(OutcomeLabel == "I/O") #%>% 
+  #write_xlsx("IO_data.xlsx")
+
+IO_data <- read_xlsx("IO_data_newn.xlsx") %>% 
+  group_by(ExperimentID) %>% 
+  filter(any(ModelType == "model control") &
+           any(ModelType == "model"))
+```
+
+
+```{r}
+# selecting the right columns
+IO_model_data <- IO_data %>% 
+  select(MatchId, StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, New_n, TimeInMinute,
+         Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.) %>% 
+  mutate(TimeInMinute = "1")
+```
+
+## calculating SD and SEM 
+```{r}
+IO_model_data <- IO_model_data %>% 
+  mutate(SD = ifelse(Outcome.measure.error.type == "SD", OutcomeError,
+                     OutcomeError * sqrt(New_n)))%>% 
+  mutate(SEM = ifelse(Outcome.measure.error.type == "SEM", 
+                      OutcomeError, SD / sqrt(New_n))) %>%
+  unique() %>% select(-OutcomeError) %>% # remove OutcomeError column 
+  mutate(Direction= ifelse(GreaterIsWorse ==TRUE, 1, -1)) %>%
+  mutate(New_n = as.numeric(New_n)) %>%
+  mutate(OutcomeResult = as.numeric(OutcomeResult)) %>%
+  mutate(SEM = as.numeric(SEM)) %>%
+  mutate(SD = as.numeric(SD)) 
+```
+
+## Widen data set I/O
+```{r}
+IO_model_data_wide <- IO_model_data %>%
+  pivot_wider(names_from = ModelType, 
+              values_from = c(New_n, SD, SEM, OutcomeResult, CohortId),
+              values_fn=list) %>% 
+  unnest(cols=everything()) 
+```
+
+
+## Calculating effect sizes I/O
+```{r}
+IO_model_data_final <- IO_model_data_wide %>%
+  mutate(combined_n = `New_n_model control` + New_n_model) %>%
+  mutate(SPooled = sqrt(((`New_n_model control`- 1) * `SD_model control`^2 +
+                           (New_n_model - 1) * SD_model^2)/ (combined_n-2))) %>%
+  mutate(SMD_step1 = (`OutcomeResult_model control`-`OutcomeResult_model`)
+           /SPooled) %>%
+  mutate(SMD_step2 = (1 - (3/(4*combined_n-9)))) %>%
+  mutate(SMD_ES = SMD_step1 * SMD_step2 * Direction) %>% #equation 15
+  mutate(SMD_ES_SE = sqrt(
+    combined_n/(New_n_model  * `New_n_model control`) +
+           SMD_ES^2/(2*(combined_n - 3.94)))) %>% #equation 16
+  mutate(weight = 1/(SMD_ES_SE^2)) %>% #equation 20
+  mutate(weighted_ES = SMD_ES * weight) %>% #equation 21 
+  group_by(StudyId) %>%
+  mutate(id = cur_group_id()) %>%
+  select(id, everything())
+```
+
+
+## Random effects meta-analysis I/O
+```{r}
+ma_results_IO <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experiment
+  sm = "SMD",
+  data = IO_model_data_final, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+
+summary(ma_results_IO)
+
+
+smd_IO <- ma_results_IO %>%
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab") ## gets the SMD into a data frame
+```
+
+
+## Forest Plot I/O
+```{r}
+forest_plot_IO <- forest(
+  ma_results_IO, # specify the meta-analysis to plot
+  sortvar = TE, # sort the data according to effect size
+  comb.fixed = FALSE, # do not plot the fixed effect estimate
+  comb.random = TRUE, # plot the random effects estimate
+  xlab = "SMD", # specify the x axis label
+  smlab = "Standardised Mean Difference", # specify the effect size label
+  label.right = "Increased I/O", # specify the graph label on right side of plot
+  label.left = "Decreased I/O", # specify the graph label on left side of plot
+  fontsize = 18, # specify the size of text (in points)
+  plotwidth = "15cm", # specify the width of the plotting region
+  digits = 1, # specify minimal number of significant digits for treatment effects
+  digits.se = 1, # specify minimal number of significant digits for standard errors
+  col.square="lightblue",
+  leftcols = c("id"),
+  leftlabs = c("id"),
+  col.diamond = "darkblue",
+  spacing=1.2
+)
+```
+
+## Other Data needed
+```{r}
+PPF_data <- full_data %>% 
+  filter(OutcomeLabel == c("PPF", "PPR")) %>% 
+  group_by(ExperimentID) %>% 
+  filter(any(ModelType == "model control") &
+           any(ModelType == "model")) %>% 
+  select(StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, Number.of.animals.in.cohort, 
+         TimeInMinute, Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.) %>% 
+  filter(TimeInMinute == "50")
+
+
+LTP_90_data <- full_data %>% 
+  filter(OutcomeLabel == "LTP") %>%
+  group_by(ExperimentID) %>% 
+  filter(any(ModelType == "model control") &
+           any(ModelType == "model")) %>% 
+  select(StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, Number.of.animals.in.cohort, 
+         TimeInMinute, Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.) %>% 
+  filter(TimeInMinute >89 & TimeInMinute< 91) %>% # first look at LTP at 30 min 
+  mutate(TimeInMinute = 90)
+
+
+LTD_30_data <- full_data %>% 
+  filter(OutcomeLabel == "LTD") %>%
+  group_by(ExperimentID) %>% 
+  filter(any(ModelType == "model control") &
+           any(ModelType == "model")) %>% 
+  select(StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, Number.of.animals.in.cohort,
+         TimeInMinute, Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.) %>% 
+  filter(TimeInMinute >29 & TimeInMinute< 31) %>% # first look at LTP at 30 min 
+  mutate(TimeInMinute = 30)
+
+LTD_60_data <- full_data %>% 
+  filter(OutcomeLabel == "LTD") %>%
+  group_by(ExperimentID) %>% 
+  filter(any(ModelType == "model control") &
+           any(ModelType == "model")) %>% 
+  select(StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, Number.of.animals.in.cohort,
+         TimeInMinute, Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.EPhys.outcomes.were.assessed.) %>% 
+  filter(TimeInMinute >59 & TimeInMinute< 61) %>% # first look at LTP at 30 min 
+  mutate(TimeInMinute = 60)
+
+```
+
+
+## Publication Bias (I/O)
+```{r}
+# Define fill colors for contour
+col.contour = c("gray75", "gray85", "gray95")
+
+# Generate funnel plot (we do not include study labels here)
+funnel.meta(ma_results_IO, xlim = c(-5, 5), #took the SMD from the forest plot
+            contour = c(0.9, 0.95, 0.99),
+            col.contour = col.contour)
+
+# Add a legend
+legend(x = -5, y = 0, 
+       legend = c("p < 0.1", "p < 0.05", "p < 0.01"),
+       fill = col.contour)
+
+# Add a title
+title("Funnel Plot of I/O")
+
+
+## Adds columns to the ma_results_ltp30 to use in the Putejovsky analysis
+ma_results_IO$n.e = IO_model_data_final$New_n_model
+ma_results_IO$n.c = IO_model_data_final$`New_n_model control`
+
+# Pustejovsky 
+metabias(ma_results_IO, method.bias = "Pustejovsky")
+```
+
+
+## Trim and Fill (IO)
+for outlier code https://raw.githubusercontent.com/MathiasHarrer/dmetar/master/R/find.outliers.R
+
+```{r}
+## Trim Fill
+tf_IO <- trimfill(ma_results_IO)
+summary(tf_IO)
+
+## trim and fill is very sensitive to heterogeneity so a sensitivity test is carried out
+
+## Test for outliers- sensitivity analysis
+# if we remove outliers it reduces the heterogeneity and allows us to rerun the trim and fill
+# find outliers 
+find.outliers(ma_results_IO) ## have to load a package (chap 5.2 in handbook)
+
+# filter out outliers and rerun meta and funnel plot
+IO_nooutliers <- ma_results_IO %>% 
+  filter(id != 10, 
+         id != 5, 
+         id != 3,
+         id != 1) # needs to be checked when find the outliers
+
+ma_results_IO_nooutliers <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experimen
+  sm = "SMD",
+  data = IO_nooutliers, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+
+summary(ma_results_IO_nooutliers) ## reduces heterogenity to 25% 
+
+tf_IO_nooutliers <- trimfill(ma_results_IO_nooutliers)
+summary(tf_IO_nooutliers)
+
+
+## plotting the two trim and fills
+# Define fill colors for contour
+contour <- c(0.9, 0.95, 0.99)
+col.contour <- c("gray75", "gray85", "gray95")
+ld <- c("p < 0.1", "p < 0.05", "p < 0.01")
+
+# Use 'par' to create two plots in one row (row, columns)
+par(mfrow=c(1,2))
+
+# Contour-enhanced funnel plot (full data)
+funnel.meta(tf_IO, 
+            xlim = c(-5, 5), contour = contour,
+            col.contour = col.contour)
+legend(x = -5, y = 0, 
+       legend = ld, fill = col.contour)
+title("I/O Funnel Plot (Trim & Fill Method)")
+
+# Contour-enhanced funnel plot (outliers removed)
+funnel.meta(tf_IO_nooutliers, 
+            xlim = c(-8, 8), contour = contour,
+            col.contour = col.contour)
+legend(x = -7.5, y = 0.01, 
+       legend = ld, fill = col.contour)
+title("Funnel Plot (Trim & Fill Method)
+      -Outliers Removed", )
+```
+
+
+## MWM Check and data
+```{r}
+##Studies that include MWM and Ephys
+
+MWM_data <- full_data %>% 
+  filter(Outcome.category == "MWM") %>% 
+  group_by(ExperimentID) %>% # within each StudyId and ExperimentId, filter to keep only cohorts with a model and model control row
+  filter(any(ModelType == "model control") &
+           any(ModelType == "model")) #%>% 
+  #write_xlsx("MWM_data.xlsx")
+
+```
+
+
+# MWM Probe data
+```{r}
+MWM_probe <- read_xlsx("MWM_data.xlsx") %>% 
+  filter(Type.of.MWM.outcome == "Probe phase")
+  
+MWM_probe_model <- MWM_probe %>% 
+  select(StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, NumberOfAnimals, TimeInMinute, Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.MWM.outcomes.were.assessed.) %>% 
+  mutate(TimeInMinute = "1") %>% 
+  mutate(GreaterIsWorse = TRUE)
+
+MWM_probe_model_data <- MWM_probe_model %>% 
+  mutate(SD = ifelse(Outcome.measure.error.type == "SD", OutcomeError, OutcomeError * sqrt(NumberOfAnimals)))%>% 
+  mutate(SEM = ifelse(Outcome.measure.error.type == "SEM", OutcomeError, SD / sqrt(NumberOfAnimals))) %>%
+  unique() %>% select(-OutcomeError) %>% # remove OutcomeError column 
+  mutate(Direction= ifelse(GreaterIsWorse ==TRUE, 1, -1)) %>%
+  mutate(NumberOfAnimals = as.numeric(NumberOfAnimals)) %>%
+  mutate(OutcomeResult = as.numeric(OutcomeResult)) %>%
+  mutate(SEM = as.numeric(SEM)) %>%
+  mutate(SD = as.numeric(SD)) 
+
+MWM_probe_model_wide <- MWM_probe_model_data %>%
+  pivot_wider(names_from = ModelType, values_from = c(NumberOfAnimals, SD, SEM, OutcomeResult, CohortId), values_fn=list) %>% 
+  unnest(cols=everything()) 
+
+
+MWM_probe_model_final <- MWM_probe_model_wide %>%
+  mutate(combined_n = `NumberOfAnimals_model control` + NumberOfAnimals_model) %>%
+  mutate(SPooled = sqrt(((`NumberOfAnimals_model control`- 1) * `SD_model control`^2 +
+                           (NumberOfAnimals_model - 1) * SD_model^2)/ (combined_n-2))) %>%
+  mutate(SMD_step1 = (`OutcomeResult_model control`-`OutcomeResult_model`)
+           /SPooled) %>%
+  mutate(SMD_step2 = (1 - (3/(4*combined_n-9)))) %>%
+  mutate(SMD_ES = SMD_step1 * SMD_step2 * Direction) %>% #equation 15
+  mutate(SMD_ES_SE = sqrt(
+    combined_n/(NumberOfAnimals_model  * `NumberOfAnimals_model control`) +
+           SMD_ES^2/(2*(combined_n - 3.94)))) %>% #equation 16
+  mutate(weight = 1/(SMD_ES_SE^2)) %>% #equation 20
+  mutate(weighted_ES = SMD_ES * weight) %>% #equation 21 
+  group_by(StudyId) %>%
+  mutate(id = cur_group_id()) %>%
+  select(id, everything())
+
+ma_results_MWM_probe <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experiment
+  sm = "SMD",
+  data = MWM_probe_model_final, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+summary(ma_results_MWM_probe)
+
+
+smd_MWM_probe <- ma_results_MWM_probe %>%
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab") ## gets the SMD into a data frame
+
+regression_MWM_probe <- MWM_probe_model_final %>% 
+  select(SMD_ES, id, StudyId) %>% 
+  left_join(smd_MWM_probe) # data set with SMD and SMD_ED, StudyId and id
+
+```
+
+
+# MWMW acquisition
+```{r}
+MWM_acquisition <- read_xlsx("MWM_data.xlsx") %>% 
+  filter(Type.of.MWM.outcome == "Acquisition phase", 
+         Was.this.a.visible.platform.test. != "TRUE") ## filter out visible
+  
+MWM_acquisition_model <- MWM_acquisition %>% 
+  select(StudyId, Author, OutcomeLabel,
+         CohortId, ExperimentID, GreaterIsWorse, OutcomeResult, 
+         Outcome.measure.average.type, OutcomeError,
+         Outcome.measure.error.type, ModelType, NumberOfAnimals, TimeInMinute, Sex.of.animals.in.cohort,
+         What.age..weeks..were.animals.when.MWM.outcomes.were.assessed.) %>% 
+  mutate(TimeInMinute = "1") %>% 
+  mutate(GreaterIsWorse = TRUE)
+
+MWM_acquisition_model_data <- MWM_acquisition_model %>% 
+  mutate(SD = ifelse(Outcome.measure.error.type == "SD", OutcomeError, OutcomeError * sqrt(NumberOfAnimals)))%>% 
+  mutate(SEM = ifelse(Outcome.measure.error.type == "SEM", OutcomeError, SD / sqrt(NumberOfAnimals))) %>%
+  unique() %>% select(-OutcomeError) %>% # remove OutcomeError column 
+  mutate(Direction= ifelse(GreaterIsWorse ==TRUE, 1, -1)) %>%
+  mutate(NumberOfAnimals = as.numeric(NumberOfAnimals)) %>%
+  mutate(OutcomeResult = as.numeric(OutcomeResult)) %>%
+  mutate(SEM = as.numeric(SEM)) %>%
+  mutate(SD = as.numeric(SD)) %>% 
+  mutate(OutcomeLabel = "MWM acquisition")
+
+MWM_acquisition_model_wide <- MWM_acquisition_model_data %>%
+  pivot_wider(names_from = ModelType, values_from = c(NumberOfAnimals, SD, SEM, OutcomeResult, CohortId), values_fn=list) %>% 
+  unnest(cols=everything())  ## error ask kaitlyn - cant pivot not sure why
+
+# should run if pivot fixed
+MWM_acquisition_model_final <- MWM_acquisition_model_wide %>%
+  mutate(combined_n = `NumberOfAnimals_model control` + NumberOfAnimals_model) %>%
+  mutate(SPooled = sqrt(((`NumberOfAnimals_model control`- 1) * `SD_model control`^2 +
+                           (NumberOfAnimals_model - 1) * SD_model^2)/ (combined_n-2))) %>%
+  mutate(SMD_step1 = (`OutcomeResult_model control`-`OutcomeResult_model`)
+           /SPooled) %>%
+  mutate(SMD_step2 = (1 - (3/(4*combined_n-9)))) %>%
+  mutate(SMD_ES = SMD_step1 * SMD_step2 * Direction) %>% #equation 15
+  mutate(SMD_ES_SE = sqrt(
+    combined_n/(NumberOfAnimals_model  * `NumberOfAnimals_model control`) +
+           SMD_ES^2/(2*(combined_n - 3.94)))) %>% #equation 16
+  mutate(weight = 1/(SMD_ES_SE^2)) %>% #equation 20
+  mutate(weighted_ES = SMD_ES * weight) %>% #equation 21 
+  group_by(StudyId) %>%
+  mutate(id = cur_group_id()) %>%
+  select(id, everything())
+
+ma_results_MWM_aquisition <- metagen(
+  `SMD_ES`, # specify the effect size for each experiment
+  `SMD_ES_SE`, # specify the variable that contains the standard error for each experiment
+  sm = "SMD",
+  data = MWM_acquisition_model_final, # specify the data set
+  studlab = id, # specify the study labels
+  comb.random = TRUE, # specify a random effects model
+  comb.fixed = FALSE, 
+  method.tau = "REML") # specify which method is used to estimate the between-study variance
+summary(ma_results_MWM_aquisition)
+
+
+smd_MWM_acquisition <- ma_results_MWM_aquisition %>%
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab") ## gets the SMD into a data frame
+
+regression_MWM_acquisition <- MWM_acquisition_model_final %>% 
+  select(SMD_ES, id, StudyId) %>% 
+  left_join(smd_MWM_acquisition) # data set with SMD and SMD_ED, StudyId and id
+```
+
+
+# Data for LTP at 30 mins
+```{r}
+# get the SMD into a data frame
+smd_ltp30 <- ma_results_ltp30 %>%
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab")
+
+#get the SMD_ES into a data frame
+regression_ltp30 <- LTP_model_data_30_final %>% 
+  select(SMD_ES, id, StudyId) %>% 
+  left_join(smd_ltp30)
+
+```
+
+
+# Data for LTP at 60 mins 
+```{r}
+smd_ltp60 <- ma_results_ltp60 %>% 
+  as.data.frame() %>% 
+  select("SMD" = "TE", "id" = "studlab")
+
+regression_ltp60 <- LTP_model_data_60_final %>% 
+  select(SMD_ES, id, StudyId) %>% 
+  left_join(smd_ltp60)
+```
+
+
